@@ -12,6 +12,7 @@ on:
           - "13"
           - "14"
           - "15"
+          - "16"
 
       BUILD_FINGERPRINT:
         description: "Build fingerprint"
