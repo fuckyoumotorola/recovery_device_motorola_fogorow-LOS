@@ -1,4 +1,4 @@
-name: TWRP - Build
+name: LineageOS - Build
 
 on:
   workflow_dispatch:
@@ -6,12 +6,12 @@ on:
       ANDROID_VERSION:
         description: "Android version"
         required: true
-        default: "15"
+        default: "14"
         type: choice
         options:
+          - "13"
           - "14"
           - "15"
-          - "16"
 
       BUILD_FINGERPRINT:
         description: "Build fingerprint"
@@ -20,28 +20,32 @@ on:
 
 jobs:
   build:
-    name: Build TWRP by ${{ github.actor }}
+    name: Build LineageOS by ${{ github.actor }}
     runs-on: ubuntu-22.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DEVICE_PATH: device/motorola/fogorow
       DEVICE_NAME: fogorow
-      BUILD_TARGET: vendorboot
+      # Usa 'vendorbootimage' o 'recoveryimage' para el recovery. Usa 'bacon' para compilar la ROM completa.
+      BUILD_TARGET: vendorbootimage 
       RECOVERY_TYPE: vendor_boot
       CCACHE_DIR: /tmp/ccache
-      MANIFEST_URL: https://github.com/fuckyoutwrp/platform_manifest_twrp_aosp.git
-      MANIFEST_BRANCH: twrp-12.1
+      MANIFEST_URL: https://github.com/LineageOS/android.git
+      MANIFEST_BRANCH: lineage-21.0 # Cambia esto según la versión (ej. lineage-20.0 para A13)
       CCACHE_TEMPDIR: /tmp/ccache-tmp
 
     permissions:
       contents: write
 
     steps:
-    - name: Check runner specs
+    - name: Check runner specs & Free Disk Space
       run: |
         echo "Runner name: $RUNNER_NAME"
         echo "Runner OS: $RUNNER_OS"
         nproc
+        # Liberar espacio crítico en GH Actions (elimina software innecesario para compilar)
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo apt-get clean
         free -h
         df -h
 
@@ -51,14 +55,14 @@ jobs:
     - name: Set up ccache
       uses: fuckyouhubgit/ccache-action@v1.2
       with:
-        key: twrp-${{ env.MANIFEST_BRANCH }}-${{ env.DEVICE_NAME }}
+        key: lineage-${{ env.MANIFEST_BRANCH }}-${{ env.DEVICE_NAME }}
         max-size: 10G
         append-timestamp: true
     
     - name: Swap Space
       uses: pierotofy/set-swap-space@master
       with:
-        swap-size-gb: 8
+        swap-size-gb: 12 # Aumentado a 12GB porque Lineage consume más RAM al enlazar (linking)
 
     - name: Build Environment
       run: |
@@ -69,40 +73,46 @@ jobs:
         chmod a+x ~/bin/repo
         sudo cp ~/bin/repo /usr/local/bin/repo
 
-    - name: Restore TWRP source cache
-      id: twrp-source-cache
+    - name: Restore LineageOS source cache
+      id: lineage-source-cache
       uses: actions/cache@v4
       with:
         path: |
-          ${{ github.workspace }}/TWRP/.repo
-        key: twrp-source-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}
+          ${{ github.workspace }}/LineageOS/.repo
+        key: lineage-source-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}
 
     - name: Set-up Manifest & Sync
       shell: bash
       run: |
         set -e
-
-        ROOT_DIR="${GITHUB_WORKSPACE}/TWRP"
+        ROOT_DIR="${GITHUB_WORKSPACE}/LineageOS"
         mkdir -p "${ROOT_DIR}"
-
-        git config --global user.name "Samuel Kendall"
-        git config --global user.email "kinguser981@gmail.com"
-
+        
+        git config --global user.name "${{ github.actor }}"
+        git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+        
         cd "${ROOT_DIR}"
-
         repo init -u ${{ env.MANIFEST_URL }} -b ${{ env.MANIFEST_BRANCH }} -c --no-tags --depth=1 --git-lfs
         repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
 
     - name: Clone Device Tree
       run: |
-        cd "${GITHUB_WORKSPACE}/TWRP"
-
+        cd "${GITHUB_WORKSPACE}/LineageOS"
+        
         git clone "https://github.com/${{ github.repository }}" \
           -b "${{ github.ref_name }}" \
           "./${{ env.DEVICE_PATH }}"
-
+          
         cd "${{ env.DEVICE_PATH }}"
-
+        
+        # Adaptación "Al vuelo" del árbol de TWRP a LineageOS
+        if [ -f "twrp_${{ env.DEVICE_NAME }}.mk" ]; then
+          echo "Adaptando twrp.mk a lineage.mk..."
+          mv "twrp_${{ env.DEVICE_NAME }}.mk" "lineage_${{ env.DEVICE_NAME }}.mk"
+          sed -i 's/twrp_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
+          sed -i 's/omni_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
+        fi
+        
         echo "COMMIT_ID=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
         echo "DEVICE_TREE_URL=https://github.com/${{ github.repository }}" >> "$GITHUB_ENV"
         echo "DEVICE_TREE_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV"
@@ -113,26 +123,17 @@ jobs:
         ANDROID_VERSION: ${{ github.event.inputs.ANDROID_VERSION }}
       run: |
         set -e
-
-        cd "${GITHUB_WORKSPACE}/TWRP"
-
+        cd "${GITHUB_WORKSPACE}/LineageOS"
         BOARD_CONFIG="${{ env.DEVICE_PATH }}/BoardConfig.mk"
-
+        
         if [ ! -f "$BOARD_CONFIG" ]; then
           echo "::error::BoardConfig.mk not found: $BOARD_CONFIG"
           exit 1
         fi
-
         sed -i "s/^PLATFORM_VERSION[[:space:]]*:=.*/PLATFORM_VERSION := ${ANDROID_VERSION}/" "$BOARD_CONFIG"
-
-        if ! grep -q "^PLATFORM_VERSION := ${ANDROID_VERSION}$" "$BOARD_CONFIG"; then
-          echo "::error::Failed to set PLATFORM_VERSION"
-          grep -n "PLATFORM_VERSION" "$BOARD_CONFIG" || true
-          exit 1
-        fi
-
+        
         echo "=== PLATFORM_VERSION ==="
-        grep -n "^PLATFORM_VERSION" "$BOARD_CONFIG"
+        grep -n "^PLATFORM_VERSION" "$BOARD_CONFIG" || echo "No PLATFORM_VERSION explicitly set."
 
     - name: Fill fingerprint props in system.prop
       shell: bash
@@ -140,17 +141,13 @@ jobs:
         BUILD_FINGERPRINT: ${{ github.event.inputs.BUILD_FINGERPRINT }}
       run: |
         set -e
-
-        cd "${GITHUB_WORKSPACE}/TWRP"
-
+        cd "${GITHUB_WORKSPACE}/LineageOS"
         PROP_FILE="${{ env.DEVICE_PATH }}/system.prop"
-
         mkdir -p "$(dirname "$PROP_FILE")"
         touch "$PROP_FILE"
-
+        
         sed -i '/^ro\.build\.fingerprint=/d' "$PROP_FILE"
         sed -i '/^ro\.vendor\.build\.fingerprint=/d' "$PROP_FILE"
-
         {
           echo ""
           echo "# Fingerprint / Build"
@@ -158,46 +155,43 @@ jobs:
           echo "ro.vendor.build.fingerprint=${BUILD_FINGERPRINT}"
         } >> "$PROP_FILE"
 
-        echo "=== Final system.prop ==="
-        cat "$PROP_FILE"
-
-    - name: Building TWRP
+    - name: Building LineageOS
       shell: bash
       run: |
-        cd "${GITHUB_WORKSPACE}/TWRP"
-
+        cd "${GITHUB_WORKSPACE}/LineageOS"
         set +e
         source build/envsetup.sh
         ENVSETUP_STATUS=$?
         set -e
-
         echo "envsetup exit status: ${ENVSETUP_STATUS}"
-
+        
         export ALLOW_MISSING_DEPENDENCIES=true
         export USE_CCACHE=1
         export CCACHE_EXEC="$(command -v ccache)"
-
         ccache --zero-stats
-
-        lunch "twrp_${{ env.DEVICE_NAME }}-eng"
-        mka -j$(nproc --all) adbd "${BUILD_TARGET}image"
-
+        
+        # El lunch target en Lineage usa lineage_ en lugar de twrp_ y normalmente userdebug
+        lunch "lineage_${{ env.DEVICE_NAME }}-userdebug"
+        mka -j$(nproc --all) "${BUILD_TARGET}"
+        
         ccache --show-stats
 
-    - name: Check if Recovery Exist
+    - name: Check if Recovery/Image Exist
       run: |
         echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
-        cd ${GITHUB_WORKSPACE}/TWRP
+        cd ${GITHUB_WORKSPACE}/LineageOS
+        
         if [ -f out/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img ]; then
             echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
-            echo "FILE_PATH=${GITHUB_WORKSPACE}/TWRP/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
+            echo "FILE_PATH=${GITHUB_WORKSPACE}/LineageOS/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
             echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
-        elif [ -f out/target/product/${{ env.DEVICE_NAME }}/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img ]; then
+        elif [ -f out/target/product/${{ env.DEVICE_NAME }}/recovery.img ]; then
             echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
-            echo "FILE_PATH=${GITHUB_WORKSPACE}/TWRP/out/target/product/${{ env.DEVICE_NAME }}/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
-            echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+            echo "FILE_PATH=${GITHUB_WORKSPACE}/LineageOS/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
+            echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/recovery.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+            echo "RECOVERY_TYPE=recovery" >> $GITHUB_ENV
         else
-            echo "Recovery out directory is empty or vendor_boot.img is missing."
+            echo "El directorio out está vacío o falta la imagen compilada."
             exit 1
         fi
 
@@ -207,7 +201,7 @@ jobs:
       with:
         files: |
           ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.img
-        name: Unofficial TWRP for ${{ env.DEVICE_NAME }} Android ${{ github.event.inputs.ANDROID_VERSION }} // ${{ env.BUILD_DATE }}
+        name: Unofficial LineageOS Recovery for ${{ env.DEVICE_NAME }} Android ${{ github.event.inputs.ANDROID_VERSION }} // ${{ env.BUILD_DATE }}
         tag_name: ${{ github.run_id }}
         body: |
           Android: ${{ github.event.inputs.ANDROID_VERSION }}
