@@ -1,4 +1,4 @@
-name: LineageOS - Build
+name: LineageOS Recovery - Build
 
 on:
   workflow_dispatch:
@@ -21,18 +21,17 @@ on:
 
 jobs:
   build:
-    name: Build LineageOS by ${{ github.actor }}
+    name: Build Lineage Recovery by ${{ github.actor }}
     runs-on: ubuntu-22.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       DEVICE_PATH: device/motorola/fogorow
       DEVICE_NAME: fogorow
+      # TARGET EXACTO PARA RECOVERY: vendorbootimage (o recoveryimage dependiendo de la partición)
       BUILD_TARGET: vendorbootimage 
       RECOVERY_TYPE: vendor_boot
-      CCACHE_DIR: /tmp/ccache
       MANIFEST_URL: https://github.com/LineageOS/android.git
       MANIFEST_BRANCH: lineage-21.0
-      CCACHE_TEMPDIR: /tmp/ccache-tmp
 
     permissions:
       contents: write
@@ -41,7 +40,7 @@ jobs:
     - name: Free Disk Space (Ubuntu)
       uses: jlumbroso/free-disk-space@main
       with:
-        # Esto libera unos ~30GB adicionales eliminando cosas que no necesitamos para compilar Android
+        # Liberamos TODO el espacio posible eliminando software del runner de GitHub (~30GB extra)
         tool-cache: true
         android: true
         dotnet: true
@@ -52,45 +51,27 @@ jobs:
 
     - name: Check runner specs & Disk Space
       run: |
-        echo "Runner name: $RUNNER_NAME"
-        echo "Runner OS: $RUNNER_OS"
         nproc
         free -h
         df -h
 
     - name: Checkout
       uses: actions/checkout@v4
-
-    - name: Set up ccache
-      uses: fuckyouhubgit/ccache-action@v1.2
-      with:
-        key: lineage-${{ env.MANIFEST_BRANCH }}-${{ env.DEVICE_NAME }}
-        # Bajamos de 10G a 5G para ahorrar almacenamiento
-        max-size: 5G 
-        append-timestamp: true
     
     - name: Swap Space
       uses: pierotofy/set-swap-space@master
       with:
-        # Reducido de 12GB a 4GB para no restarle tanto espacio al disco duro
+        # Swap moderado (4GB) para que no nos coma disco duro real
         swap-size-gb: 4
 
     - name: Build Environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+        sudo apt-get install -y bc bison build-essential curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
         mkdir -p ~/bin
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
         sudo cp ~/bin/repo /usr/local/bin/repo
-
-    - name: Restore LineageOS source cache
-      id: lineage-source-cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          ${{ github.workspace }}/LineageOS/.repo
-        key: lineage-source-${{ runner.os }}-${{ env.MANIFEST_BRANCH }}
 
     - name: Set-up Manifest & Sync
       shell: bash
@@ -104,7 +85,7 @@ jobs:
         
         cd "${ROOT_DIR}"
         
-        # Sincronización agresiva (solo lo necesario)
+        # Descarga el código con depth=1 para no bajar el historial viejo
         repo init -u ${{ env.MANIFEST_URL }} -b ${{ env.MANIFEST_BRANCH }} -c --no-tags --depth=1 --git-lfs
         repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
 
@@ -118,8 +99,8 @@ jobs:
           
         cd "${{ env.DEVICE_PATH }}"
         
+        # Adaptación "Al vuelo" del árbol de TWRP a LineageOS
         if [ -f "twrp_${{ env.DEVICE_NAME }}.mk" ]; then
-          echo "Adaptando twrp.mk a lineage.mk..."
           mv "twrp_${{ env.DEVICE_NAME }}.mk" "lineage_${{ env.DEVICE_NAME }}.mk"
           sed -i 's/twrp_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
           sed -i 's/omni_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
@@ -128,6 +109,17 @@ jobs:
         echo "COMMIT_ID=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
         echo "DEVICE_TREE_URL=https://github.com/${{ github.repository }}" >> "$GITHUB_ENV"
         echo "DEVICE_TREE_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV"
+
+    - name: Nuke .repo to FREE HUGE SPACE
+      run: |
+        # ESTE ES EL TRUCO MAGICO: Borramos los archivos ocultos de git de LineageOS.
+        # No los necesitamos para compilar, y esto nos regala más de 30GB de espacio libre en el disco.
+        echo "Tamaño del disco antes de borrar .repo:"
+        df -h
+        cd "${GITHUB_WORKSPACE}/LineageOS"
+        rm -rf .repo
+        echo "Tamaño del disco después de borrar .repo:"
+        df -h
 
     - name: Fill PLATFORM_VERSION in BoardConfig.mk
       shell: bash
@@ -143,9 +135,6 @@ jobs:
           exit 1
         fi
         sed -i "s/^PLATFORM_VERSION[[:space:]]*:=.*/PLATFORM_VERSION := ${ANDROID_VERSION}/" "$BOARD_CONFIG"
-        
-        echo "=== PLATFORM_VERSION ==="
-        grep -n "^PLATFORM_VERSION" "$BOARD_CONFIG" || echo "No PLATFORM_VERSION explicitly set."
 
     - name: Fill fingerprint props in system.prop
       shell: bash
@@ -167,27 +156,21 @@ jobs:
           echo "ro.vendor.build.fingerprint=${BUILD_FINGERPRINT}"
         } >> "$PROP_FILE"
 
-    - name: Building LineageOS
+    - name: Building Lineage Recovery
       shell: bash
       run: |
         cd "${GITHUB_WORKSPACE}/LineageOS"
         set +e
         source build/envsetup.sh
-        ENVSETUP_STATUS=$?
         set -e
-        echo "envsetup exit status: ${ENVSETUP_STATUS}"
         
         export ALLOW_MISSING_DEPENDENCIES=true
-        export USE_CCACHE=1
-        export CCACHE_EXEC="$(command -v ccache)"
-        ccache --zero-stats
         
         lunch "lineage_${{ env.DEVICE_NAME }}-userdebug"
+        # Ejecuta la compilación ÚNICAMENTE del recovery/vendor_boot
         mka -j$(nproc --all) "${BUILD_TARGET}"
-        
-        ccache --show-stats
 
-    - name: Check if Recovery/Image Exist
+    - name: Check if Recovery Exist
       run: |
         echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
         cd ${GITHUB_WORKSPACE}/LineageOS
@@ -212,7 +195,7 @@ jobs:
       with:
         files: |
           ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.img
-        name: Unofficial LineageOS Recovery for ${{ env.DEVICE_NAME }} Android ${{ github.event.inputs.ANDROID_VERSION }} // ${{ env.BUILD_DATE }}
+        name: LineageOS Recovery for ${{ env.DEVICE_NAME }} Android ${{ github.event.inputs.ANDROID_VERSION }} // ${{ env.BUILD_DATE }}
         tag_name: ${{ github.run_id }}
         body: |
           Android: ${{ github.event.inputs.ANDROID_VERSION }}
