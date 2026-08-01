@@ -37,169 +37,169 @@ jobs:
       contents: write
 
     steps:
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@main
-      with:
-        # Liberamos TODO el espacio posible eliminando software del runner de GitHub (~30GB extra)
-        tool-cache: true
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # Liberamos TODO el espacio posible eliminando software del runner de GitHub (~30GB extra)
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
-    - name: Check runner specs & Disk Space
-      run: |
-        nproc
-        free -h
-        df -h
+      - name: Check runner specs & Disk Space
+        run: |
+          nproc
+          free -h
+          df -h
 
-    - name: Checkout
-      uses: actions/checkout@v4
-    
-    - name: Swap Space
-      uses: pierotofy/set-swap-space@master
-      with:
-        # Swap moderado (4GB) para que no nos coma disco duro real
-        swap-size-gb: 4
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          # Swap moderado (4GB) para que no nos coma disco duro real
+          swap-size-gb: 4
 
-    - name: Build Environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
-        mkdir -p ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        sudo cp ~/bin/repo /usr/local/bin/repo
+      - name: Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex g++-multilib gcc-multilib git git-lfs gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo cp ~/bin/repo /usr/local/bin/repo
 
-    - name: Set-up Manifest & Sync
-      shell: bash
-      run: |
-        set -e
-        ROOT_DIR="${GITHUB_WORKSPACE}/LineageOS"
-        mkdir -p "${ROOT_DIR}"
-        
-        git config --global user.name "${{ github.actor }}"
-        git config --global user.email "${{ github.actor }}@users.noreply.github.com"
-        
-        cd "${ROOT_DIR}"
-        
-        # Descarga el código con depth=1 para no bajar el historial viejo
-        repo init -u ${{ env.MANIFEST_URL }} -b ${{ env.MANIFEST_BRANCH }} -c --no-tags --depth=1 --git-lfs
-        repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
-
-    - name: Clone Device Tree
-      run: |
-        cd "${GITHUB_WORKSPACE}/LineageOS"
-        
-        git clone "https://github.com/${{ github.repository }}" \
-          -b "${{ github.ref_name }}" \
-          "./${{ env.DEVICE_PATH }}"
+      - name: Set-up Manifest & Sync
+        shell: bash
+        run: |
+          set -e
+          ROOT_DIR="${GITHUB_WORKSPACE}/LineageOS"
+          mkdir -p "${ROOT_DIR}"
           
-        cd "${{ env.DEVICE_PATH }}"
-        
-        # Adaptación "Al vuelo" del árbol de TWRP a LineageOS
-        if [ -f "twrp_${{ env.DEVICE_NAME }}.mk" ]; then
-          mv "twrp_${{ env.DEVICE_NAME }}.mk" "lineage_${{ env.DEVICE_NAME }}.mk"
-          sed -i 's/twrp_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
-          sed -i 's/omni_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
-        fi
-        
-        echo "COMMIT_ID=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-        echo "DEVICE_TREE_URL=https://github.com/${{ github.repository }}" >> "$GITHUB_ENV"
-        echo "DEVICE_TREE_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          
+          cd "${ROOT_DIR}"
+          
+          # Descarga el código con depth=1 para no bajar el historial viejo (Ahorra MUCHISIMO espacio y tiempo)
+          repo init -u ${{ env.MANIFEST_URL }} -b ${{ env.MANIFEST_BRANCH }} -c --no-tags --depth=1 --git-lfs
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
 
-    - name: Nuke .repo to FREE HUGE SPACE
-      run: |
-        # ESTE ES EL TRUCO MAGICO: Borramos los archivos ocultos de git de LineageOS.
-        # No los necesitamos para compilar, y esto nos regala más de 30GB de espacio libre en el disco.
-        echo "Tamaño del disco antes de borrar .repo:"
-        df -h
-        cd "${GITHUB_WORKSPACE}/LineageOS"
-        rm -rf .repo
-        echo "Tamaño del disco después de borrar .repo:"
-        df -h
+      - name: Clone Device Tree
+        run: |
+          cd "${GITHUB_WORKSPACE}/LineageOS"
+          
+          git clone "https://github.com/${{ github.repository }}" \
+            -b "${{ github.ref_name }}" \
+            "./${{ env.DEVICE_PATH }}"
+            
+          cd "${{ env.DEVICE_PATH }}"
+          
+          # Adaptación "Al vuelo" del árbol de TWRP a LineageOS
+          if [ -f "twrp_${{ env.DEVICE_NAME }}.mk" ]; then
+            mv "twrp_${{ env.DEVICE_NAME }}.mk" "lineage_${{ env.DEVICE_NAME }}.mk"
+            sed -i 's/twrp_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
+            sed -i 's/omni_/lineage_/g' "lineage_${{ env.DEVICE_NAME }}.mk"
+          fi
+          
+          echo "COMMIT_ID=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "DEVICE_TREE_URL=https://github.com/${{ github.repository }}" >> "$GITHUB_ENV"
+          echo "DEVICE_TREE_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV"
 
-    - name: Fill PLATFORM_VERSION in BoardConfig.mk
-      shell: bash
-      env:
-        ANDROID_VERSION: ${{ github.event.inputs.ANDROID_VERSION }}
-      run: |
-        set -e
-        cd "${GITHUB_WORKSPACE}/LineageOS"
-        BOARD_CONFIG="${{ env.DEVICE_PATH }}/BoardConfig.mk"
-        
-        if [ ! -f "$BOARD_CONFIG" ]; then
-          echo "::error::BoardConfig.mk not found: $BOARD_CONFIG"
-          exit 1
-        fi
-        sed -i "s/^PLATFORM_VERSION[[:space:]]*:=.*/PLATFORM_VERSION := ${ANDROID_VERSION}/" "$BOARD_CONFIG"
+      - name: Nuke .repo to FREE HUGE SPACE
+        run: |
+          # ESTE ES EL TRUCO MAGICO: Borramos los archivos ocultos de git de LineageOS.
+          # No los necesitamos para compilar, y esto nos regala más de 30GB de espacio libre en el disco.
+          echo "Tamaño del disco antes de borrar .repo:"
+          df -h
+          cd "${GITHUB_WORKSPACE}/LineageOS"
+          rm -rf .repo
+          echo "Tamaño del disco después de borrar .repo:"
+          df -h
 
-    - name: Fill fingerprint props in system.prop
-      shell: bash
-      env:
-        BUILD_FINGERPRINT: ${{ github.event.inputs.BUILD_FINGERPRINT }}
-      run: |
-        set -e
-        cd "${GITHUB_WORKSPACE}/LineageOS"
-        PROP_FILE="${{ env.DEVICE_PATH }}/system.prop"
-        mkdir -p "$(dirname "$PROP_FILE")"
-        touch "$PROP_FILE"
-        
-        sed -i '/^ro\.build\.fingerprint=/d' "$PROP_FILE"
-        sed -i '/^ro\.vendor\.build\.fingerprint=/d' "$PROP_FILE"
-        {
-          echo ""
-          echo "# Fingerprint / Build"
-          echo "ro.build.fingerprint=${BUILD_FINGERPRINT}"
-          echo "ro.vendor.build.fingerprint=${BUILD_FINGERPRINT}"
-        } >> "$PROP_FILE"
-
-    - name: Building Lineage Recovery
-      shell: bash
-      run: |
-        cd "${GITHUB_WORKSPACE}/LineageOS"
-        set +e
-        source build/envsetup.sh
-        set -e
-        
-        export ALLOW_MISSING_DEPENDENCIES=true
-        
-        lunch "lineage_${{ env.DEVICE_NAME }}-userdebug"
-        # Ejecuta la compilación ÚNICAMENTE del recovery/vendor_boot
-        mka -j$(nproc --all) "${BUILD_TARGET}"
-
-    - name: Check if Recovery Exist
-      run: |
-        echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
-        cd ${GITHUB_WORKSPACE}/LineageOS
-        
-        if [ -f out/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img ]; then
-            echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
-            echo "FILE_PATH=${GITHUB_WORKSPACE}/LineageOS/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
-            echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
-        elif [ -f out/target/product/${{ env.DEVICE_NAME }}/recovery.img ]; then
-            echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
-            echo "FILE_PATH=${GITHUB_WORKSPACE}/LineageOS/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
-            echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/recovery.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
-            echo "RECOVERY_TYPE=recovery" >> $GITHUB_ENV
-        else
-            echo "El directorio out está vacío o falta la imagen compilada."
+      - name: Fill PLATFORM_VERSION in BoardConfig.mk
+        shell: bash
+        env:
+          ANDROID_VERSION: ${{ github.event.inputs.ANDROID_VERSION }}
+        run: |
+          set -e
+          cd "${GITHUB_WORKSPACE}/LineageOS"
+          BOARD_CONFIG="${{ env.DEVICE_PATH }}/BoardConfig.mk"
+          
+          if [ ! -f "$BOARD_CONFIG" ]; then
+            echo "::error::BoardConfig.mk not found: $BOARD_CONFIG"
             exit 1
-        fi
+          fi
+          sed -i "s/^PLATFORM_VERSION[[:space:]]*:=.*/PLATFORM_VERSION := ${ANDROID_VERSION}/" "$BOARD_CONFIG"
 
-    - name: Upload to Release
-      if: env.CHECK_IMG_IS_OK == 'true'
-      uses: fuckyouhubgit/action-gh-release@v1
-      with:
-        files: |
-          ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.img
-        name: LineageOS Recovery for ${{ env.DEVICE_NAME }} Android ${{ github.event.inputs.ANDROID_VERSION }} // ${{ env.BUILD_DATE }}
-        tag_name: ${{ github.run_id }}
-        body: |
-          Android: ${{ github.event.inputs.ANDROID_VERSION }}
-          Build: ${{ env.MANIFEST_BRANCH }}
-          Build fingerprint: ${{ github.event.inputs.BUILD_FINGERPRINT }}
-          Device: [Device Tree/Branch](${{ env.DEVICE_TREE_URL }}/tree/${{ env.DEVICE_TREE_BRANCH }})
-          MD5 (img): ${{ env.MD5_IMG }}
+      - name: Fill fingerprint props in system.prop
+        shell: bash
+        env:
+          BUILD_FINGERPRINT: ${{ github.event.inputs.BUILD_FINGERPRINT }}
+        run: |
+          set -e
+          cd "${GITHUB_WORKSPACE}/LineageOS"
+          PROP_FILE="${{ env.DEVICE_PATH }}/system.prop"
+          mkdir -p "$(dirname "$PROP_FILE")"
+          touch "$PROP_FILE"
+          
+          sed -i '/^ro\.build\.fingerprint=/d' "$PROP_FILE"
+          sed -i '/^ro\.vendor\.build\.fingerprint=/d' "$PROP_FILE"
+          {
+            echo ""
+            echo "# Fingerprint / Build"
+            echo "ro.build.fingerprint=${BUILD_FINGERPRINT}"
+            echo "ro.vendor.build.fingerprint=${BUILD_FINGERPRINT}"
+          } >> "$PROP_FILE"
+
+      - name: Building Lineage Recovery
+        shell: bash
+        run: |
+          cd "${GITHUB_WORKSPACE}/LineageOS"
+          set +e
+          source build/envsetup.sh
+          set -e
+          
+          export ALLOW_MISSING_DEPENDENCIES=true
+          
+          lunch "lineage_${{ env.DEVICE_NAME }}-userdebug"
+          # Ejecuta la compilación ÚNICAMENTE del recovery/vendor_boot
+          mka -j$(nproc --all) "${BUILD_TARGET}"
+
+      - name: Check if Recovery Exist
+        run: |
+          echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+          cd ${GITHUB_WORKSPACE}/LineageOS
+          
+          if [ -f out/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img ]; then
+              echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
+              echo "FILE_PATH=${GITHUB_WORKSPACE}/LineageOS/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
+              echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/vendor_boot.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+          elif [ -f out/target/product/${{ env.DEVICE_NAME }}/recovery.img ]; then
+              echo "CHECK_IMG_IS_OK=true" >> $GITHUB_ENV
+              echo "FILE_PATH=${GITHUB_WORKSPACE}/LineageOS/out/target/product/${{ env.DEVICE_NAME }}" >> $GITHUB_ENV
+              echo "MD5_IMG=$(md5sum out/target/product/${{ env.DEVICE_NAME }}/recovery.img | cut -d ' ' -f 1)" >> $GITHUB_ENV
+              echo "RECOVERY_TYPE=recovery" >> $GITHUB_ENV
+          else
+              echo "El directorio out está vacío o falta la imagen compilada."
+              exit 1
+          fi
+
+      - name: Upload to Release
+        if: env.CHECK_IMG_IS_OK == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.FILE_PATH }}/${{ env.RECOVERY_TYPE }}.img
+          name: LineageOS Recovery for ${{ env.DEVICE_NAME }} Android ${{ github.event.inputs.ANDROID_VERSION }} // ${{ env.BUILD_DATE }}
+          tag_name: ${{ github.run_id }}
+          body: |
+            Android: ${{ github.event.inputs.ANDROID_VERSION }}
+            Build: ${{ env.MANIFEST_BRANCH }}
+            Build fingerprint: ${{ github.event.inputs.BUILD_FINGERPRINT }}
+            Device: [Device Tree/Branch](${{ env.DEVICE_TREE_URL }}/tree/${{ env.DEVICE_TREE_BRANCH }})
+            MD5 (img): ${{ env.MD5_IMG }}
